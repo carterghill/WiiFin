@@ -25,7 +25,7 @@ jobs:
       - name: Build & install GRRLIB
         run: |
           git clone --depth 1 https://github.com/GRRLIB/GRRLIB.git /tmp/GRRLIB
-          cd /tmp/GRRLIB/GRRLIB
+          cd /tmp/GRRLIB
           /opt/devkitpro/portlibs/wii/bin/powerpc-eabi-cmake -B build
           cmake --build build --target install
 
