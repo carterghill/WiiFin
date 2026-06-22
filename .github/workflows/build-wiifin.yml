@@ -22,7 +22,8 @@ jobs:
             wii-dev \
             ppc-libpng ppc-freetype ppc-libjpeg-turbo \
             libfat-ogc ppc-libmad ppc-brotli
-          apt-get update && apt-get install -y cmake || dkp-pacman -S --needed --noconfirm cmake
+          apt-get update
+          apt-get install -y cmake xxd || apt-get install -y cmake vim-common
 
       - name: Build & install GRRLIB
         run: |
