@@ -2,16 +2,19 @@ name: Build WiiFin
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:        
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: devkitpro/devkitppc:latest   # devkitPPC + libogc + wii-dev preinstalled
+      image: devkitpro/devkitppc:latest
 
     steps:
+      - name: Checkout WiiFin
+        uses: actions/checkout@v4
+
       - name: Install portlibs
         run: |
           dkp-pacman -Syu --needed --noconfirm
@@ -19,7 +22,6 @@ jobs:
             wii-dev \
             ppc-libpng ppc-freetype ppc-libjpeg-turbo \
             libfat-ogc ppc-libmad ppc-brotli
-          # cmake is needed for the GRRLIB + mbedTLS cross builds
           apt-get update && apt-get install -y cmake || dkp-pacman -S --needed --noconfirm cmake
 
       - name: Build & install GRRLIB
@@ -29,36 +31,33 @@ jobs:
           /opt/devkitpro/portlibs/wii/bin/powerpc-eabi-cmake -B build
           cmake --build build --target install
 
-
       - name: Build mbedTLS for PPC
         run: |
           git clone --depth 1 --branch v3.6.2 --recurse-submodules \
             https://github.com/Mbed-TLS/mbedtls.git /tmp/mbedtls
           cd /tmp/mbedtls
-          # Wii is neither Unix nor Windows, so disable mbedTLS's OS entropy source.
-          # (WiiFin supplies its own entropy at runtime.)
           sed -i 's|^//#define MBEDTLS_NO_PLATFORM_ENTROPY|#define MBEDTLS_NO_PLATFORM_ENTROPY|' \
             include/mbedtls/mbedtls_config.h
-          sed -i 's|^#define MBEDTLS_HAVE_TIME$|//#define MBEDTLS_HAVE_TIME|' include/mbedtls/mbedtls_config.h
-          sed -i 's|^#define MBEDTLS_HAVE_TIME_DATE$|//#define MBEDTLS_HAVE_TIME_DATE|' include/mbedtls/mbedtls_config.h
+          sed -i 's|^#define MBEDTLS_HAVE_TIME$|//#define MBEDTLS_HAVE_TIME|' \
+            include/mbedtls/mbedtls_config.h
+          sed -i 's|^#define MBEDTLS_HAVE_TIME_DATE$|//#define MBEDTLS_HAVE_TIME_DATE|' \
+            include/mbedtls/mbedtls_config.h
+          sed -i 's|^#define MBEDTLS_TIMING_C$|//#define MBEDTLS_TIMING_C|' \
+            include/mbedtls/mbedtls_config.h
           /opt/devkitpro/portlibs/wii/bin/powerpc-eabi-cmake -B build \
             -DENABLE_PROGRAMS=OFF \
             -DENABLE_TESTING=OFF \
             -DUSE_SHARED_MBEDTLS_LIBRARY=OFF \
             -DUSE_STATIC_MBEDTLS_LIBRARY=ON
           cmake --build build
-          # Place into the project's expected layout: libs/mbedtls/{include,lib}
           DEST="$GITHUB_WORKSPACE/libs/mbedtls"
           mkdir -p "$DEST/include" "$DEST/lib"
           cp -r include/* "$DEST/include/"
           find build -name '*.a' -exec cp {} "$DEST/lib/" \;
           echo "mbedTLS libs:" && ls -la "$DEST/lib"
 
-
-
       - name: Build WiiFin
         run: make -j"$(nproc)"
-
 
       - name: Package boot.dol
         run: |
