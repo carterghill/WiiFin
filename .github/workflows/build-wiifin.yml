@@ -44,6 +44,8 @@ jobs:
             include/mbedtls/mbedtls_config.h
           sed -i 's|^#define MBEDTLS_TIMING_C$|//#define MBEDTLS_TIMING_C|' \
             include/mbedtls/mbedtls_config.h
+          sed -i 's|^#define MBEDTLS_NET_C$|//#define MBEDTLS_NET_C|' \
+            include/mbedtls/mbedtls_config.h
           /opt/devkitpro/portlibs/wii/bin/powerpc-eabi-cmake -B build \
             -DENABLE_PROGRAMS=OFF \
             -DENABLE_TESTING=OFF \
