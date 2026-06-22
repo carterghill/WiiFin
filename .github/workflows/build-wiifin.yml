@@ -35,6 +35,9 @@ jobs:
           git clone --depth 1 --branch v3.6.2 --recurse-submodules \
             https://github.com/Mbed-TLS/mbedtls.git /tmp/mbedtls
           cd /tmp/mbedtls
+	  sed -i 's|^//#define MBEDTLS_NO_PLATFORM_ENTROPY|#define 
+	  MBEDTLS_NO_PLATFORM_ENTROPY|' \
+  	    include/mbedtls/mbedtls_config.h
           /opt/devkitpro/portlibs/wii/bin/powerpc-eabi-cmake -B build \
             -DENABLE_PROGRAMS=OFF \
             -DENABLE_TESTING=OFF \
