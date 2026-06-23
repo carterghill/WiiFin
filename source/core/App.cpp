@@ -353,33 +353,14 @@ static bool runPlaySession(JellyfinClient& client,
             GRRLIB_Init();
             app_debug_log("APP N: after GRRLIB_Init");
             SYS_Report("[DBG] GRRLIB_Init() DONE\\n");
-            /* GRRLIB_Init internally calls VIDEO_SetBlack(false).  Re-blank
-             * immediately so the uninitialised XFBs are never visible. */
-            app_debug_log("APP O: before VIDEO_SetBlack(true) after GRRLIB_Init");
-            VIDEO_SetBlack(true);
-            VIDEO_Flush();
-            app_debug_log("APP P: after post-GRRLIB VIDEO_SetBlack/Flush");
-            /* Show the loading spinner in both GX framebuffers so there is
-             * no flash while the app is tearing down the play session. */
-            {
-                app_debug_log("APP Q: before post-play spinner render");
-                GRRLIB_texImg* tmpRing = GRRLIB_LoadTexture(data_ring_png);
-                for (int _fi = 0; _fi < 2; ++_fi) {
-                    GRRLIB_FillScreen(0x0A1628FF);
-                    if (tmpRing) {
-                        GRRLIB_SetMidHandle(tmpRing, true);
-                        GRRLIB_DrawImg(320, 240, tmpRing, 0, 1.0f, 1.0f, 0xFFFFFFFF);
-                        GRRLIB_SetMidHandle(tmpRing, false);
-                    }
-                    GRRLIB_Render();
-                }
-                GRRLIB_FreeTexture(tmpRing);
-            }
-            app_debug_log("APP R: after post-play spinner render");
-            /* Both framebuffers now contain the spinner — safe to unblank. */
+            /* Do not render an intermediate GRRLIB spinner here. On hardware,
+             * the first GRRLIB_Render() after reclaiming GX can hang after
+             * MPlayer exits, leaving VI permanently black. Let the normal UI
+             * render path draw the next frame instead. */
+            app_debug_log("APP O: before immediate post-GRRLIB unblank");
             VIDEO_SetBlack(false);
             VIDEO_Flush();
-            app_debug_log("APP S: after unblank post-play spinner");
+            app_debug_log("APP P: after immediate post-GRRLIB unblank");
 
             long long positionTicks = (long long)(g_mplayer_time_pos * 10000000.0f);
 
