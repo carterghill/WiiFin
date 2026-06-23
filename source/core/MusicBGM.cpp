@@ -92,12 +92,17 @@ void MusicBGM::init(bool startPlaying) {
 void MusicBGM::stop() {
     SYS_Report("[DBG] MusicBGM::stop ENTER running=%d thread=%p asnd=%d\n",
                (int)s_running, (void*)s_thread, (int)s_asndRunning);
+    if (!s_running && s_thread == LWP_THREAD_NULL && !s_asndRunning) {
+        SYS_Report("[DBG] MusicBGM::stop EXIT (already stopped)\n");
+        return;
+    }
     s_running = false;
     if (s_thread != LWP_THREAD_NULL) {
         LWP_JoinThread(s_thread, nullptr);
         s_thread = LWP_THREAD_NULL;
     }
-    mp3PlayerStopSafe();
+    if (s_asndRunning)
+        mp3PlayerStopSafe();
     if (s_asndRunning) {
         ASND_End();
         s_asndRunning = false;

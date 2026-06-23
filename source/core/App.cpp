@@ -389,8 +389,11 @@ static bool runPlaySession(JellyfinClient& client,
              * immediately (BGM stays paused) or exit (BGM not needed). */
             if (!willRetry && !isTrackSwitch && !isHomeSuspend) {
                 SYS_Report("[DBG] BGM restore: musicWasRunning=%d\n", (int)musicWasRunning);
+                app_debug_log("APP U: before BGM restore musicWasRunning=%d", (int)musicWasRunning);
                 MusicBGM::stop();
+                app_debug_log("APP U1: after MusicBGM::stop");
                 MusicBGM::init(musicWasRunning);
+                app_debug_log("APP U2: after MusicBGM::init");
                 SYS_Report("[DBG] BGM restore DONE\n");
             }
 
@@ -401,11 +404,16 @@ static bool runPlaySession(JellyfinClient& client,
              * the same position so the "stopped" report is both misleading
              * and a source of unnecessary multi-second loader freeze. */
             if (!willRetry && !isTrackSwitch && !isHomeSuspend && positionTicks > 0) {
+                app_debug_log("APP V: before reportPlaybackStopped ticks=%lld", positionTicks);
                 client.reportPlaybackStopped(serverUrl, auth, itemId, mediaSourceId,
                                              playSessionId, positionTicks);
+                app_debug_log("APP V1: after reportPlaybackStopped");
             }
-            if (!isHomeSuspend)
+            if (!isHomeSuspend) {
+                app_debug_log("APP W: before deleteActiveEncoding");
                 client.deleteActiveEncoding(serverUrl, auth, playSessionId);
+                app_debug_log("APP W1: after deleteActiveEncoding");
+            }
 
             if (willRetry) {
                 long long retryTicks = startTimeTicks + positionTicks;
@@ -423,10 +431,13 @@ static bool runPlaySession(JellyfinClient& client,
                 /* URL re-acquisition failed; fall through as final stop */
                 reason = PLAYER_STOP_EOF;
             }
+            app_debug_log("APP X: breaking inner play loop reason=%d", reason);
             break;
         }
 
+        app_debug_log("APP Y: before wii_player_set_overlay(nullptr)");
         wii_player_set_overlay(nullptr);
+        app_debug_log("APP Y1: after wii_player_set_overlay(nullptr)");
 
         /* --- Handle stop reason --- */
         if (reason == PLAYER_STOP_HOME) {
@@ -533,6 +544,7 @@ static bool runPlaySession(JellyfinClient& client,
 
         /* Return true if user chose Wii Menu or Reset (both exit playback) */
         if (reason == PLAYER_STOP_RESET) s_restartApp = true;
+        app_debug_log("APP Z: runPlaySession returning reason=%d", reason);
         return (reason == PLAYER_STOP_WIIMENU || reason == PLAYER_STOP_RESET);
     }
 }
