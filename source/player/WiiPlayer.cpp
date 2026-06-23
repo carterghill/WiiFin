@@ -591,6 +591,8 @@ int wii_player_play(const char* url)
      * VIDEO_SetNextFramebuffer and GRRLIB_Render's own
      * VIDEO_SetNextFramebuffer, MPlayer's last video frame is briefly
      * displayed.  Clear all stale callbacks now. */
+    GX_AbortFrame();
+    GX_Flush();
     GX_SetDrawDoneCallback(NULL);
     VIDEO_SetPreRetraceCallback(NULL);
     VIDEO_SetPostRetraceCallback(NULL);
