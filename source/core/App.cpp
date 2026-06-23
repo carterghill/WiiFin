@@ -21,6 +21,7 @@
 
 #include <unistd.h>
 #include <sys/stat.h>
+#include <stdarg.h>
 #include <string>
 #include "../player/WiiPlayer.h"
 #include "../player/PlayerOverlay.h"
@@ -47,6 +48,21 @@ static bool doShowHomeOverlay(GRRLIB_ttfFont* font, GRRLIB_texImg* btnTex,
 static GRRLIB_texImg* s_loadingRingTex = nullptr;
 static float          s_ringAngle      = 0.0f;
 
+static void app_debug_log(const char* fmt, ...)
+{
+    FILE* dbg = fopen("sd:/wiiplayer_debug.txt", "a");
+    if (!dbg) dbg = fopen("fat:/wiiplayer_debug.txt", "a");
+    if (!dbg) return;
+
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(dbg, fmt, ap);
+    va_end(ap);
+    fputc('\n', dbg);
+    fflush(dbg);
+    fclose(dbg);
+}
+
 static void grrlibSpinnerRender(void)
 {
     static int render_count = 0;
@@ -68,6 +84,8 @@ static void grrlibSpinnerRender(void)
 
 static void grrlibSpinnerCleanup(void)
 {
+    g_wiifin_grrlib_render_cb = nullptr;
+    usleep(33000); // wait >1 bgThread frame so it stops calling GRRLIB
     if (s_loadingRingTex) {
         GRRLIB_FreeTexture(s_loadingRingTex);
         s_loadingRingTex = nullptr;
@@ -315,7 +333,11 @@ static bool runPlaySession(JellyfinClient& client,
             g_wiifin_ss_secs = (startTimeTicks > 30000000LL) ? 3.0f : 0.0f;
             SYS_Report("[App] wii_player_play: startTicks=%lld ss=%.1f\n",
                        startTimeTicks, (double)g_wiifin_ss_secs);
+            app_debug_log("APP A: before wii_player_play startTicks=%lld ss=%.1f",
+                          startTimeTicks, (double)g_wiifin_ss_secs);
             reason = wii_player_play(url.c_str());
+            app_debug_log("APP L: App got wii_player_play return reason=%d loading=%d",
+                          reason, (int)g_wiifin_loading_active);
             SYS_Report("[DBG] wii_player_play RETURNED reason=%d loading=%d\n",
                        reason, (int)g_wiifin_loading_active);
 
@@ -327,15 +349,20 @@ static bool runPlaySession(JellyfinClient& client,
             WPAD_SetDataFormat(WPAD_CHAN_0, WPAD_FMT_BTNS_ACC_IR);
             WPAD_SetVRes(WPAD_CHAN_0, 640, 480);
             SYS_Report("[DBG] GRRLIB_Init() CALLING @ runPlaySession return\\n");
+            app_debug_log("APP M: before GRRLIB_Init");
             GRRLIB_Init();
+            app_debug_log("APP N: after GRRLIB_Init");
             SYS_Report("[DBG] GRRLIB_Init() DONE\\n");
             /* GRRLIB_Init internally calls VIDEO_SetBlack(false).  Re-blank
              * immediately so the uninitialised XFBs are never visible. */
+            app_debug_log("APP O: before VIDEO_SetBlack(true) after GRRLIB_Init");
             VIDEO_SetBlack(true);
             VIDEO_Flush();
+            app_debug_log("APP P: after post-GRRLIB VIDEO_SetBlack/Flush");
             /* Show the loading spinner in both GX framebuffers so there is
              * no flash while the app is tearing down the play session. */
             {
+                app_debug_log("APP Q: before post-play spinner render");
                 GRRLIB_texImg* tmpRing = GRRLIB_LoadTexture(data_ring_png);
                 for (int _fi = 0; _fi < 2; ++_fi) {
                     GRRLIB_FillScreen(0x0A1628FF);
@@ -348,9 +375,11 @@ static bool runPlaySession(JellyfinClient& client,
                 }
                 GRRLIB_FreeTexture(tmpRing);
             }
+            app_debug_log("APP R: after post-play spinner render");
             /* Both framebuffers now contain the spinner — safe to unblank. */
             VIDEO_SetBlack(false);
             VIDEO_Flush();
+            app_debug_log("APP S: after unblank post-play spinner");
 
             long long positionTicks = (long long)(g_mplayer_time_pos * 10000000.0f);
 

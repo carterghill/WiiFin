@@ -23,6 +23,7 @@
 #include <setjmp.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <math.h>
 #include <ogc/system.h>    /* SYS_STDIO_Report */
 #include <ogc/video.h>     /* VIDEO_GetPreferredMode */
@@ -162,6 +163,21 @@ void* g_wiifin_xfb_spinner_ptr = nullptr;
  * between sessions.  Otherwise the static counter survives and fires
  * prematurely on the second playback. */
 static int s_loading_watchdog = 0;
+
+static void wii_debug_log(const char* fmt, ...)
+{
+    FILE* dbg = fopen("sd:/wiiplayer_debug.txt", "a");
+    if (!dbg) dbg = fopen("fat:/wiiplayer_debug.txt", "a");
+    if (!dbg) return;
+
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(dbg, fmt, ap);
+    va_end(ap);
+    fputc('\n', dbg);
+    fflush(dbg);
+    fclose(dbg);
+}
 
 /* GRRLIB loading spinner — App.cpp provides a render callback that draws
  * ring.png via GRRLIB_DrawImg, and a cleanup callback that does
@@ -346,6 +362,8 @@ static void* bgThreadFunc(void*)
  * ----------------------------------------------------------------------- */
 int wii_player_play(const char* url)
 {
+    wii_debug_log("A: wii_player_play enter");
+
     /* Build argv dynamically so we can conditionally append -ss when the
      * stream starts with a RESUME_PAD back-off (track switches / resumes).
      * Without -ss, Jellyfin's live transcoder produces an initial A/V gap
@@ -455,6 +473,7 @@ int wii_player_play(const char* url)
         }
     }
     SYS_Report("[WiiPlayer] play: %s\n", safeUrl.c_str());
+    wii_debug_log("A1: play url prepared");
 
     {
         FILE *dbg = fopen("sd:/wiiplayer_debug.txt", "a");
@@ -516,21 +535,34 @@ int wii_player_play(const char* url)
         register_mpegts_demuxer();
         g_wiifin_gx_active = 1; /* suppress getch2 WPAD scan during WiiFin playback */
         SYS_Report("[DBG] >>> mplayer_main() ENTER\n");
+        wii_debug_log("B: mplayer_main enter");
         mplayer_main(argc, const_cast<char**>(argv));
         SYS_Report("[DBG] <<< mplayer_main() RETURNED  reason=%d time=%.1f dur=%.1f loading=%d\n",
                    (int)g_player_stop_reason, (float)g_mplayer_time_pos,
                    (float)g_mplayer_duration, (int)g_wiifin_loading_active);
+        wii_debug_log("C: mplayer_main returned reason=%d time=%.1f dur=%.1f loading=%d",
+                      (int)g_player_stop_reason, (float)g_mplayer_time_pos,
+                      (float)g_mplayer_duration, (int)g_wiifin_loading_active);
         g_wiifin_gx_active = 0;
+    }
+    if (rc != 0) {
+        wii_debug_log("C: mplayer longjmp rc=%d reason=%d time=%.1f dur=%.1f loading=%d",
+                      rc, (int)g_player_stop_reason, (float)g_mplayer_time_pos,
+                      (float)g_mplayer_duration, (int)g_wiifin_loading_active);
     }
 
     /* Stop background thread */
     SYS_Report("[DBG] wii_player_play: stopping bgThread\n");
+    wii_debug_log("D: stopping bgThread");
     s_bg_stop = 1;
     if (s_bg_thread != LWP_THREAD_NULL) {
+        wii_debug_log("D1: before LWP_JoinThread");
         LWP_JoinThread(s_bg_thread, nullptr);
+        wii_debug_log("E: after LWP_JoinThread");
         s_bg_thread = LWP_THREAD_NULL;
     }
     SYS_Report("[DBG] wii_player_play: bgThread joined\n");
+    wii_debug_log("E1: bgThread joined/none");
 
     /* Close any TCP sockets that MPlayer CE left open after exiting via longjmp.
      * MPlayer's stream and cache threads cannot unwind through the setjmp boundary,
@@ -546,15 +578,19 @@ int wii_player_play(const char* url)
      * IOS supports at most 24 concurrent socket handles (FDs 0–23). */
     {
         SYS_Report("[WiiPlayer] closing leaked MPlayer sockets\n");
+        wii_debug_log("F: closing leaked MPlayer sockets");
         for (s32 _fd = 0; _fd < 24; ++_fd) net_close(_fd);
     }
     /* Give IOS time to process the socket closures and let the MPlayer cache
      * thread observe the errors and stop issuing net_read() calls. */
+    wii_debug_log("F1: leaked socket close sweep done");
     usleep(200000);
+    wii_debug_log("F2: post socket-close sleep done");
 
     g_wiifin_gx_active = 0; /* re-enable getch2 WPAD scan after playback */
 
     /* Clear overlay callbacks so the next GRRLIB owner is not surprised */
+    wii_debug_log("G: clearing callbacks");
     g_wiifin_overlay_cb         = nullptr;
     g_wiifin_gx_overlay_cb      = nullptr;
     SYS_Report("[DBG] loading_active SET=0 @ cleanup (was %d)\n", (int)g_wiifin_loading_active);
@@ -578,6 +614,8 @@ int wii_player_play(const char* url)
 
     SYS_Report("[WiiPlayer] mplayer exited rc=%d reason=%d time=%.1f\n",
                rc, (int)g_player_stop_reason, (float)g_mplayer_time_pos);
+    wii_debug_log("G1: mplayer exited rc=%d reason=%d time=%.1f",
+                  rc, (int)g_player_stop_reason, (float)g_mplayer_time_pos);
 
     /* MPlayer exits via longjmp — mpviClear() is never called, so GX and
      * VIDEO callbacks set by mpgxInit() are still active:
@@ -591,18 +629,27 @@ int wii_player_play(const char* url)
      * VIDEO_SetNextFramebuffer and GRRLIB_Render's own
      * VIDEO_SetNextFramebuffer, MPlayer's last video frame is briefly
      * displayed.  Clear all stale callbacks now. */
+    wii_debug_log("H: before GX cleanup");
     GX_AbortFrame();
+    wii_debug_log("H1: after GX_AbortFrame");
     GX_Flush();
+    wii_debug_log("H2: after GX_Flush");
     GX_SetDrawDoneCallback(NULL);
+    wii_debug_log("H3: after GX_SetDrawDoneCallback(NULL)");
     VIDEO_SetPreRetraceCallback(NULL);
+    wii_debug_log("H4: after VIDEO_SetPreRetraceCallback(NULL)");
     VIDEO_SetPostRetraceCallback(NULL);
+    wii_debug_log("I: after VIDEO_SetPostRetraceCallback(NULL)");
 
     /* Blank the display RIGHT NOW so the last video frame is never visible
      * during GRRLIB re-init. */
+    wii_debug_log("J: before VIDEO_SetBlack(true)");
     VIDEO_SetBlack(true);
     VIDEO_Flush();
+    wii_debug_log("J1: after VIDEO_SetBlack/Flush");
 
     SYS_Report("[DBG] wii_player_play returning reason=%d\\n", (int)g_player_stop_reason);
+    wii_debug_log("K: returning from wii_player_play reason=%d", (int)g_player_stop_reason);
 
     return (int)g_player_stop_reason;
 }
