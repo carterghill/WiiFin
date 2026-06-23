@@ -29,6 +29,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/GRRLIB/GRRLIB.git /tmp/GRRLIB
           cd /tmp/GRRLIB
+          git apply "$GITHUB_WORKSPACE/.github/patches/grrlib-reinit.patch"
           /opt/devkitpro/portlibs/wii/bin/powerpc-eabi-cmake -B build
           cmake --build build --target install
 

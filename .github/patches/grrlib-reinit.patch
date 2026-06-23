@@ -1,0 +1,24 @@
+diff --git a/GRRLIB/GRRLIB/GRRLIB_core.c b/GRRLIB/GRRLIB/GRRLIB_core.c
+index fad1d83..9a12bc9 100644
+--- a/GRRLIB/GRRLIB/GRRLIB_core.c
++++ b/GRRLIB/GRRLIB/GRRLIB_core.c
+@@ -219,11 +219,9 @@ int  GRRLIB_Init (void) {
+  * and only if the setup function has been called.
+  */
+ void  GRRLIB_Exit (void) {
+-    static bool done = false;
+-    if (done == true || is_setup == false) {
++    if (is_setup == false) {
+         return;
+     }
+-    done = true;
+ 
+     // Allow write access to the full screen
+     GX_SetClipMode( GX_CLIP_DISABLE );
+@@ -256,4 +254,6 @@ void  GRRLIB_Exit (void) {
+ 
+     // Done with TTF
+     GRRLIB_ExitTTF();
++
++    is_setup = false;
+ }

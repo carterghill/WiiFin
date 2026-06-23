@@ -27,5 +27,6 @@ __pycache__/
 Thumbs.db
 
 # Bundled third-party static libs (built locally; not committed to source control)
+.deps/
 libs/mbedtls/lib/
 libs/mplayer-ce-build/

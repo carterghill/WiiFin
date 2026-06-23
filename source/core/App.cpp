@@ -377,25 +377,18 @@ static bool runPlaySession(JellyfinClient& client,
              * loop iteration anyway). */
             bool isTrackSwitch = (reason == PLAYER_STOP_AUDIO || reason == PLAYER_STOP_SUB);
             bool isHomeSuspend = (reason == PLAYER_STOP_HOME);
+            app_debug_log("APP P1: cleanup flags willRetry=%d trackSwitch=%d homeSuspend=%d ticks=%lld",
+                          (int)willRetry, (int)isTrackSwitch,
+                          (int)isHomeSuspend, positionTicks);
 
-            /* Restart BGM now — before the blocking network calls — so the
-             * user hears music while session cleanup (report + delete) runs.
-             * Only done when we are NOT about to retry (which calls
-             * wii_player_play again, requiring ASND to stay ended), and NOT
-             * for track switches (immediately restarted, BGM paused again).
-             * When BGM was not running, still reinitAudio() so that ASND
-             * (and therefore SoundFX) is alive after AESND_Reset().
-             * Also skip for HOME suspend: we will either resume MPlayer
-             * immediately (BGM stays paused) or exit (BGM not needed). */
-            if (!willRetry && !isTrackSwitch && !isHomeSuspend) {
-                SYS_Report("[DBG] BGM restore: musicWasRunning=%d\n", (int)musicWasRunning);
-                app_debug_log("APP U: before BGM restore musicWasRunning=%d", (int)musicWasRunning);
-                MusicBGM::stop();
-                app_debug_log("APP U1: after MusicBGM::stop");
-                MusicBGM::init(musicWasRunning);
-                app_debug_log("APP U2: after MusicBGM::init");
-                SYS_Report("[DBG] BGM restore DONE\n");
-            }
+            /* Do not touch BGM/ASND inside the post-MPlayer handoff. MPlayer's
+             * audio backend has just torn down/replaced low-level audio state,
+             * and calling MP3Player/ASND here can trip stale callback state on
+             * hardware. The outer library path reinitializes audio after the
+             * app assets are safely reloaded. */
+            if (!willRetry && !isTrackSwitch && !isHomeSuspend)
+                app_debug_log("APP U: skipped in-runPlay BGM restore musicWasRunning=%d",
+                              (int)musicWasRunning);
 
             /* Only report stopped if something actually played (position > 0).
              * When positionTicks == 0, nothing was played — skip the call to
@@ -584,23 +577,39 @@ static const int B_SPACING = 78;
 
 void App::reloadAssets() {
     SYS_Report("[DBG] reloadAssets ENTER\n");
+    app_debug_log("APP RA0: reloadAssets enter logo=%p btn=%p cursor=%p ring=%p font=%p jpFont=%p",
+                  logoTex, btnTex, cursorPointerTex, ringTex, font, jpFont);
     if (logoTex) GRRLIB_FreeTexture(logoTex);
+    app_debug_log("APP RA1: before load logo");
     logoTex = GRRLIB_LoadTexture(logo_wiifin_png);
+    app_debug_log("APP RA2: after load logo=%p", logoTex);
     if (btnTex) GRRLIB_FreeTexture(btnTex);
+    app_debug_log("APP RA3: before load button");
     btnTex = GRRLIB_LoadTexture(button_start_png);
+    app_debug_log("APP RA4: after load button=%p", btnTex);
     if (cursorPointerTex) GRRLIB_FreeTexture(cursorPointerTex);
+    app_debug_log("APP RA5: before load cursor");
     cursorPointerTex = GRRLIB_LoadTexture(data_cursors_PointerP1_64_png);
+    app_debug_log("APP RA6: after load cursor=%p", cursorPointerTex);
     if (cursorPointerTex)
         wii_player_set_cursor_tex(cursorPointerTex->data,
                                   (u16)cursorPointerTex->w, (u16)cursorPointerTex->h,
                                   (u8)cursorPointerTex->format);
+    app_debug_log("APP RA7: after cursor handoff");
     if (ringTex) GRRLIB_FreeTexture(ringTex);
+    app_debug_log("APP RA8: before load ring");
     ringTex = GRRLIB_LoadTexture(data_ring_png);
+    app_debug_log("APP RA9: after load ring=%p", ringTex);
     // FreeType was wiped by GRRLIB_Exit() — reload fonts without FreeTTF
+    app_debug_log("APP RA10: before load font");
     font   = GRRLIB_LoadTTF(wii_font_ttf, wii_font_ttf_len);
+    app_debug_log("APP RA11: after load font=%p", font);
+    app_debug_log("APP RA12: before load jpFont");
     jpFont = GRRLIB_LoadTTF(jp_font_ttf, jp_font_ttf_len);
+    app_debug_log("APP RA13: after load jpFont=%p", jpFont);
     SYS_Report("[DBG] reloadAssets EXIT logo=%p btn=%p cursor=%p ring=%p font=%p jpFont=%p\n",
                logoTex, btnTex, cursorPointerTex, ringTex, font, jpFont);
+    app_debug_log("APP RA14: reloadAssets exit");
 }
 
 void App::init(const char* argv0) {
@@ -1122,19 +1131,27 @@ void App::loop() {
                 jpFont = nullptr;
                 app_debug_log("APP T: invalidated stale app assets before reloadAssets");
                 reloadAssets();
+                app_debug_log("APP T1: after reloadAssets");
                 /* Ensure ASND is alive after returning from the player.
                  * Full stop + init from scratch — avoids stale audio state
                  * left behind by ao_gekko / AESND after MPlayer exits. */
+                app_debug_log("APP T2: before post-play BGM check running=%d", MusicBGM::isRunning() ? 1 : 0);
                 if (!MusicBGM::isRunning()) {
                     SYS_Report("[DBG] runLibrary: stop+init (BGM not running)\n");
+                    app_debug_log("APP T3: before MusicBGM stop/init");
                     MusicBGM::stop();
+                    app_debug_log("APP T4: after MusicBGM stop");
                     MusicBGM::init(false);
+                    app_debug_log("APP T5: after MusicBGM init");
                 } else {
                     SYS_Report("[DBG] runLibrary: skip reinit (BGM already running)\n");
+                    app_debug_log("APP T6: skipped post-play BGM reinit");
                 }
                 SYS_Report("[DBG] runLibrary: reloadAssets done\n");
+                app_debug_log("APP T7: before lv.reinitAfterPlayback wantsExit=%d", wantsExit ? 1 : 0);
                 if (wantsExit) { running = false; return; }
                 lv.reinitAfterPlayback(font, jpFont, cursorPointerTex, ringTex);
+                app_debug_log("APP T8: after lv.reinitAfterPlayback");
             } else {
                 break; // user navigated back (B from libraries grid) — no play requested
             }
