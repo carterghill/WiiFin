@@ -572,14 +572,18 @@ static const int B_SPACING = 78;
 
 void App::reloadAssets() {
     SYS_Report("[DBG] reloadAssets ENTER\n");
-    GRRLIB_FreeTexture(logoTex);   logoTex   = GRRLIB_LoadTexture(logo_wiifin_png);
-    GRRLIB_FreeTexture(btnTex);    btnTex    = GRRLIB_LoadTexture(button_start_png);
-    GRRLIB_FreeTexture(cursorPointerTex);    cursorPointerTex    = GRRLIB_LoadTexture(data_cursors_PointerP1_64_png);
+    if (logoTex) GRRLIB_FreeTexture(logoTex);
+    logoTex = GRRLIB_LoadTexture(logo_wiifin_png);
+    if (btnTex) GRRLIB_FreeTexture(btnTex);
+    btnTex = GRRLIB_LoadTexture(button_start_png);
+    if (cursorPointerTex) GRRLIB_FreeTexture(cursorPointerTex);
+    cursorPointerTex = GRRLIB_LoadTexture(data_cursors_PointerP1_64_png);
     if (cursorPointerTex)
         wii_player_set_cursor_tex(cursorPointerTex->data,
                                   (u16)cursorPointerTex->w, (u16)cursorPointerTex->h,
                                   (u8)cursorPointerTex->format);
-    GRRLIB_FreeTexture(ringTex);   ringTex   = GRRLIB_LoadTexture(data_ring_png);
+    if (ringTex) GRRLIB_FreeTexture(ringTex);
+    ringTex = GRRLIB_LoadTexture(data_ring_png);
     // FreeType was wiped by GRRLIB_Exit() — reload fonts without FreeTTF
     font   = GRRLIB_LoadTTF(wii_font_ttf, wii_font_ttf_len);
     jpFont = GRRLIB_LoadTTF(jp_font_ttf, jp_font_ttf_len);
@@ -1095,6 +1099,16 @@ void App::loop() {
                 lv.releaseForPlayback();
                 bool wantsExit = runPlaySession(jellyfinClient, auth, p.serverUrl, lv);
                 SYS_Report("[DBG] runLibrary: runPlaySession returned wantsExit=%d\n", (int)wantsExit);
+                /* Video playback calls GRRLIB_Exit() while taking over GX.
+                 * The app's old GRRLIB texture/font handles are invalid after
+                 * that and must not be passed back into GRRLIB_FreeTexture. */
+                logoTex = nullptr;
+                btnTex = nullptr;
+                cursorPointerTex = nullptr;
+                ringTex = nullptr;
+                font = nullptr;
+                jpFont = nullptr;
+                app_debug_log("APP T: invalidated stale app assets before reloadAssets");
                 reloadAssets();
                 /* Ensure ASND is alive after returning from the player.
                  * Full stop + init from scratch — avoids stale audio state
