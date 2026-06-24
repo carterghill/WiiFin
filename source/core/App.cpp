@@ -21,7 +21,6 @@
 
 #include <unistd.h>
 #include <sys/stat.h>
-#include <stdarg.h>
 #include <string>
 #include "../player/WiiPlayer.h"
 #include "../player/PlayerOverlay.h"
@@ -47,21 +46,6 @@ static bool doShowHomeOverlay(GRRLIB_ttfFont* font, GRRLIB_texImg* btnTex,
  * calls grrlibSpinnerRender() every frame to draw ring.png rotating. */
 static GRRLIB_texImg* s_loadingRingTex = nullptr;
 static float          s_ringAngle      = 0.0f;
-
-static void app_debug_log(const char* fmt, ...)
-{
-    FILE* dbg = fopen("sd:/wiiplayer_debug.txt", "a");
-    if (!dbg) dbg = fopen("fat:/wiiplayer_debug.txt", "a");
-    if (!dbg) return;
-
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(dbg, fmt, ap);
-    va_end(ap);
-    fputc('\n', dbg);
-    fflush(dbg);
-    fclose(dbg);
-}
 
 static void grrlibSpinnerRender(void)
 {
@@ -109,6 +93,15 @@ struct {
     std::string    mediaSourceId;
     std::string    playSessionId;
 } s_pendingReport;
+
+struct PostPlayCleanup {
+    bool reportStopped = false;
+    bool deleteEncoding = false;
+    std::string itemId;
+    std::string mediaSourceId;
+    std::string playSessionId;
+    long long positionTicks = 0;
+};
 
 static void onStreamOpened() {
     s_pendingReport.client->reportPlaybackStart(
@@ -186,8 +179,11 @@ static void sanitizeTrackLabel(const char* src, char* dst, size_t dstSize)
 static bool runPlaySession(JellyfinClient& client,
                            const JellyfinAuth& auth,
                            const std::string& serverUrl,
-                           LibraryView& lv)
+                           LibraryView& lv,
+                           PostPlayCleanup& postCleanup)
 {
+    postCleanup = PostPlayCleanup();
+
     /* Working copies of play parameters — updated on next/prev/track change */
     std::string           itemId        = lv.pendingPlayItemId;
     std::string           mediaSourceId = lv.pendingPlayMediaSourceId;
@@ -333,11 +329,7 @@ static bool runPlaySession(JellyfinClient& client,
             g_wiifin_ss_secs = (startTimeTicks > 30000000LL) ? 3.0f : 0.0f;
             SYS_Report("[App] wii_player_play: startTicks=%lld ss=%.1f\n",
                        startTimeTicks, (double)g_wiifin_ss_secs);
-            app_debug_log("APP A: before wii_player_play startTicks=%lld ss=%.1f",
-                          startTimeTicks, (double)g_wiifin_ss_secs);
             reason = wii_player_play(url.c_str());
-            app_debug_log("APP L: App got wii_player_play return reason=%d loading=%d",
-                          reason, (int)g_wiifin_loading_active);
             SYS_Report("[DBG] wii_player_play RETURNED reason=%d loading=%d\n",
                        reason, (int)g_wiifin_loading_active);
 
@@ -349,18 +341,8 @@ static bool runPlaySession(JellyfinClient& client,
             WPAD_SetDataFormat(WPAD_CHAN_0, WPAD_FMT_BTNS_ACC_IR);
             WPAD_SetVRes(WPAD_CHAN_0, 640, 480);
             SYS_Report("[DBG] GRRLIB_Init() CALLING @ runPlaySession return\\n");
-            app_debug_log("APP M: before GRRLIB_Init");
             GRRLIB_Init();
-            app_debug_log("APP N: after GRRLIB_Init");
             SYS_Report("[DBG] GRRLIB_Init() DONE\\n");
-            /* Do not render an intermediate GRRLIB spinner here. On hardware,
-             * the first GRRLIB_Render() after reclaiming GX can hang after
-             * MPlayer exits, leaving VI permanently black. Let the normal UI
-             * render path draw the next frame instead. */
-            app_debug_log("APP O: before immediate post-GRRLIB unblank");
-            VIDEO_SetBlack(false);
-            VIDEO_Flush();
-            app_debug_log("APP P: after immediate post-GRRLIB unblank");
 
             long long positionTicks = (long long)(g_mplayer_time_pos * 10000000.0f);
 
@@ -377,35 +359,28 @@ static bool runPlaySession(JellyfinClient& client,
              * loop iteration anyway). */
             bool isTrackSwitch = (reason == PLAYER_STOP_AUDIO || reason == PLAYER_STOP_SUB);
             bool isHomeSuspend = (reason == PLAYER_STOP_HOME);
-            app_debug_log("APP P1: cleanup flags willRetry=%d trackSwitch=%d homeSuspend=%d ticks=%lld",
-                          (int)willRetry, (int)isTrackSwitch,
-                          (int)isHomeSuspend, positionTicks);
+            bool returnsToLibrary = !willRetry && !isTrackSwitch && !isHomeSuspend &&
+                                    reason != PLAYER_STOP_NEXT && reason != PLAYER_STOP_PREV &&
+                                    reason != PLAYER_STOP_WIIMENU && reason != PLAYER_STOP_RESET;
 
-            /* Do not touch BGM/ASND inside the post-MPlayer handoff. MPlayer's
-             * audio backend has just torn down/replaced low-level audio state,
-             * and calling MP3Player/ASND here can trip stale callback state on
-             * hardware. The outer library path reinitializes audio after the
-             * app assets are safely reloaded. */
-            if (!willRetry && !isTrackSwitch && !isHomeSuspend)
-                app_debug_log("APP U: skipped in-runPlay BGM restore musicWasRunning=%d",
-                              (int)musicWasRunning);
+            if (!willRetry && !isTrackSwitch && !isHomeSuspend && musicWasRunning)
+                MusicBGM::resume();
 
-            /* Only report stopped if something actually played (position > 0).
-             * When positionTicks == 0, nothing was played — skip the call to
-             * avoid blocking for minutes on a slow/busy server.
-             * Also skip for track switches: playback resumes immediately at
-             * the same position so the "stopped" report is both misleading
-             * and a source of unnecessary multi-second loader freeze. */
-            if (!willRetry && !isTrackSwitch && !isHomeSuspend && positionTicks > 0) {
-                app_debug_log("APP V: before reportPlaybackStopped ticks=%lld", positionTicks);
-                client.reportPlaybackStopped(serverUrl, auth, itemId, mediaSourceId,
-                                             playSessionId, positionTicks);
-                app_debug_log("APP V1: after reportPlaybackStopped");
-            }
-            if (!isHomeSuspend) {
-                app_debug_log("APP W: before deleteActiveEncoding");
-                client.deleteActiveEncoding(serverUrl, auth, playSessionId);
-                app_debug_log("APP W1: after deleteActiveEncoding");
+            if (returnsToLibrary) {
+                postCleanup.reportStopped = positionTicks > 0;
+                postCleanup.deleteEncoding = true;
+                postCleanup.itemId = itemId;
+                postCleanup.mediaSourceId = mediaSourceId;
+                postCleanup.playSessionId = playSessionId;
+                postCleanup.positionTicks = positionTicks;
+            } else {
+                if (!willRetry && !isTrackSwitch && !isHomeSuspend && positionTicks > 0) {
+                    client.reportPlaybackStopped(serverUrl, auth, itemId, mediaSourceId,
+                                                 playSessionId, positionTicks);
+                }
+                if (!isHomeSuspend) {
+                    client.deleteActiveEncoding(serverUrl, auth, playSessionId);
+                }
             }
 
             if (willRetry) {
@@ -424,13 +399,10 @@ static bool runPlaySession(JellyfinClient& client,
                 /* URL re-acquisition failed; fall through as final stop */
                 reason = PLAYER_STOP_EOF;
             }
-            app_debug_log("APP X: breaking inner play loop reason=%d", reason);
             break;
         }
 
-        app_debug_log("APP Y: before wii_player_set_overlay(nullptr)");
         wii_player_set_overlay(nullptr);
-        app_debug_log("APP Y1: after wii_player_set_overlay(nullptr)");
 
         /* --- Handle stop reason --- */
         if (reason == PLAYER_STOP_HOME) {
@@ -537,7 +509,6 @@ static bool runPlaySession(JellyfinClient& client,
 
         /* Return true if user chose Wii Menu or Reset (both exit playback) */
         if (reason == PLAYER_STOP_RESET) s_restartApp = true;
-        app_debug_log("APP Z: runPlaySession returning reason=%d", reason);
         return (reason == PLAYER_STOP_WIIMENU || reason == PLAYER_STOP_RESET);
     }
 }
@@ -577,39 +548,22 @@ static const int B_SPACING = 78;
 
 void App::reloadAssets() {
     SYS_Report("[DBG] reloadAssets ENTER\n");
-    app_debug_log("APP RA0: reloadAssets enter logo=%p btn=%p cursor=%p ring=%p font=%p jpFont=%p",
-                  logoTex, btnTex, cursorPointerTex, ringTex, font, jpFont);
     if (logoTex) GRRLIB_FreeTexture(logoTex);
-    app_debug_log("APP RA1: before load logo");
     logoTex = GRRLIB_LoadTexture(logo_wiifin_png);
-    app_debug_log("APP RA2: after load logo=%p", logoTex);
     if (btnTex) GRRLIB_FreeTexture(btnTex);
-    app_debug_log("APP RA3: before load button");
     btnTex = GRRLIB_LoadTexture(button_start_png);
-    app_debug_log("APP RA4: after load button=%p", btnTex);
     if (cursorPointerTex) GRRLIB_FreeTexture(cursorPointerTex);
-    app_debug_log("APP RA5: before load cursor");
     cursorPointerTex = GRRLIB_LoadTexture(data_cursors_PointerP1_64_png);
-    app_debug_log("APP RA6: after load cursor=%p", cursorPointerTex);
     if (cursorPointerTex)
         wii_player_set_cursor_tex(cursorPointerTex->data,
                                   (u16)cursorPointerTex->w, (u16)cursorPointerTex->h,
                                   (u8)cursorPointerTex->format);
-    app_debug_log("APP RA7: after cursor handoff");
     if (ringTex) GRRLIB_FreeTexture(ringTex);
-    app_debug_log("APP RA8: before load ring");
     ringTex = GRRLIB_LoadTexture(data_ring_png);
-    app_debug_log("APP RA9: after load ring=%p", ringTex);
-    // FreeType was wiped by GRRLIB_Exit() — reload fonts without FreeTTF
-    app_debug_log("APP RA10: before load font");
     font   = GRRLIB_LoadTTF(wii_font_ttf, wii_font_ttf_len);
-    app_debug_log("APP RA11: after load font=%p", font);
-    app_debug_log("APP RA12: before load jpFont");
     jpFont = GRRLIB_LoadTTF(jp_font_ttf, jp_font_ttf_len);
-    app_debug_log("APP RA13: after load jpFont=%p", jpFont);
     SYS_Report("[DBG] reloadAssets EXIT logo=%p btn=%p cursor=%p ring=%p font=%p jpFont=%p\n",
                logoTex, btnTex, cursorPointerTex, ringTex, font, jpFont);
-    app_debug_log("APP RA14: reloadAssets exit");
 }
 
 void App::init(const char* argv0) {
@@ -1099,59 +1053,46 @@ void App::loop() {
                 bool wantsExit = mpv.run();
                 if (g_app_powerOff || g_app_reset) { running = false; return; }
                 SoundFX::play(SoundFX::FX::Back);
-                {
-                    GRRLIB_texImg* tmpRing = GRRLIB_LoadTexture(data_ring_png);
-                    for (int _fi = 0; _fi < 2; ++_fi) {
-                        GRRLIB_FillScreen(0x0A1628FF);
-                        if (tmpRing) {
-                            GRRLIB_SetMidHandle(tmpRing, true);
-                            GRRLIB_DrawImg(320, 240, tmpRing, 0, 1.0f, 1.0f, 0xFFFFFFFF);
-                            GRRLIB_SetMidHandle(tmpRing, false);
-                        }
-                        GRRLIB_Render();
-                    }
-                    GRRLIB_FreeTexture(tmpRing);
-                }
                 reloadAssets();
                 if (wantsExit) { running = false; return; }
                 lv.reinitAfterPlayback(font, jpFont, cursorPointerTex, ringTex);
+                SoundFX::play(SoundFX::FX::Loading);
+                lv.drawLoadingFrame();
+                lv.drawLoadingFrame();
+                SoundFX::stopLoading();
             } else if (!lv.pendingPlayUrl.empty()) {
                 SYS_Report("[DBG] runLibrary: entering runPlaySession\n");
                 lv.releaseForPlayback();
-                bool wantsExit = runPlaySession(jellyfinClient, auth, p.serverUrl, lv);
+                PostPlayCleanup postCleanup;
+                bool wantsExit = runPlaySession(jellyfinClient, auth, p.serverUrl, lv, postCleanup);
                 SYS_Report("[DBG] runLibrary: runPlaySession returned wantsExit=%d\n", (int)wantsExit);
-                /* Video playback calls GRRLIB_Exit() while taking over GX.
-                 * The app's old GRRLIB texture/font handles are invalid after
-                 * that and must not be passed back into GRRLIB_FreeTexture. */
                 logoTex = nullptr;
                 btnTex = nullptr;
                 cursorPointerTex = nullptr;
                 ringTex = nullptr;
                 font = nullptr;
                 jpFont = nullptr;
-                app_debug_log("APP T: invalidated stale app assets before reloadAssets");
                 reloadAssets();
-                app_debug_log("APP T1: after reloadAssets");
-                /* Ensure ASND is alive after returning from the player.
-                 * Full stop + init from scratch — avoids stale audio state
-                 * left behind by ao_gekko / AESND after MPlayer exits. */
-                app_debug_log("APP T2: before post-play BGM check running=%d", MusicBGM::isRunning() ? 1 : 0);
-                if (!MusicBGM::isRunning()) {
-                    SYS_Report("[DBG] runLibrary: stop+init (BGM not running)\n");
-                    app_debug_log("APP T3: before MusicBGM stop/init");
-                    MusicBGM::stop();
-                    app_debug_log("APP T4: after MusicBGM stop");
-                    MusicBGM::init(false);
-                    app_debug_log("APP T5: after MusicBGM init");
-                } else {
-                    SYS_Report("[DBG] runLibrary: skip reinit (BGM already running)\n");
-                    app_debug_log("APP T6: skipped post-play BGM reinit");
-                }
                 SYS_Report("[DBG] runLibrary: reloadAssets done\n");
-                app_debug_log("APP T7: before lv.reinitAfterPlayback wantsExit=%d", wantsExit ? 1 : 0);
                 if (wantsExit) { running = false; return; }
                 lv.reinitAfterPlayback(font, jpFont, cursorPointerTex, ringTex);
-                app_debug_log("APP T8: after lv.reinitAfterPlayback");
+                if (!MusicBGM::isRunning())
+                    MusicBGM::reinitAudio();
+                if (postCleanup.reportStopped || postCleanup.deleteEncoding) {
+                    lv.runWithLoading([&]() {
+                        if (postCleanup.reportStopped) {
+                            jellyfinClient.reportPlaybackStopped(p.serverUrl, auth,
+                                                                 postCleanup.itemId,
+                                                                 postCleanup.mediaSourceId,
+                                                                 postCleanup.playSessionId,
+                                                                 postCleanup.positionTicks);
+                        }
+                        if (postCleanup.deleteEncoding) {
+                            jellyfinClient.deleteActiveEncoding(p.serverUrl, auth,
+                                                                postCleanup.playSessionId);
+                        }
+                    });
+                }
             } else {
                 break; // user navigated back (B from libraries grid) — no play requested
             }

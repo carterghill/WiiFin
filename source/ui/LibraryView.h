@@ -21,6 +21,7 @@ public:
     bool update(ir_t& ir);
     void render(ir_t& ir);
     void drawLoadingFrame(); // draw+flush one spinning ring frame (also called by network callback)
+    void runWithLoading(std::function<void()> fn);
 
     // Free all textures and heavy heap data before starting playback.
     // Preserves pendingPlay* fields which the caller needs.
@@ -294,7 +295,6 @@ private:
     void loadMusicSuggestions();
     void freeMusicSuggestions();
     void loadPlaylistsTab();
-    void runWithLoading(std::function<void()> fn);
     void freePosters();
     void freeDetail();
     void drawGradientBG();
