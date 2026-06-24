@@ -23,7 +23,7 @@ jobs:
             ppc-libpng ppc-freetype ppc-libjpeg-turbo \
             libfat-ogc ppc-libmad ppc-brotli
           apt-get update
-          apt-get install -y cmake xxd || apt-get install -y cmake vim-common
+          apt-get install -y cmake xxd imagemagick || apt-get install -y cmake vim-common imagemagick
 
       - name: Build & install GRRLIB
         run: |
@@ -64,11 +64,13 @@ jobs:
       - name: Build WiiFin
         run: make -j"$(nproc)"
 
-      - name: Package boot.dol
+      - name: Package Homebrew Channel app
         run: |
           test -f WiiFin.dol
           mkdir -p out/apps/wiifin
           cp WiiFin.dol out/apps/wiifin/boot.dol
+          cp apps/WiiFin/meta.xml out/apps/wiifin/meta.xml
+          convert assets/logo_wiifin_banner.png -resize 128x48 -background none -gravity center -extent 128x48 out/apps/wiifin/icon.png
           cp WiiFin.dol out/boot.dol
 
       - name: Upload artifact
